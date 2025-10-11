@@ -39,70 +39,8 @@ class Item:
         if self.results_history is None:
             self.results_history = []
 
-# ========== Monte Carlo ==========
-from tqdm import tqdm
-from collections import Counter
-def monte_carlo_mix(
-    rng: random.Generator,
-    num_success_items: int,
-    item_state: Item,
-    Procedure: Callable,
-    properties: List[str] = ["atk_value", "power_value", "ag_value", "int_value", "lucky_value"]
-) -> Dict[str, Any]:
-
-    items_distribution: List[int] = []
-    scrolls: List[List[str]] = []
-    destroys: List[List[bool]] = []
-    success: List[List[int]] = []
-    items_properties: Dict[str, List[List[int]]] = {
-            f: [] for f in properties
-    }
-
-    def aggregate_batch(items_list: List[Item]) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
-        out["scrolls_i"]  = [h for item in items_list for h in item.history]
-        out["destroys_i"] = [item.destroyed for item in items_list]
-        out["success_i"]  = [int(np.sum(item.results_history)) for item in items_list]
-        for f in properties:
-            out[f] = [getattr(item, f) for item in items_list]
-        return out
-
-    # 每次试验的类型计数
-    for _ in tqdm(range(num_success_items), desc="Monte Carlo"):
-        items_list = Procedure(rng, item_state)
-        
-        # statistics
-        items_distribution.append(len(items_list))
-
-        # 使用
-        agg = aggregate_batch(items_list)
-
-        scrolls.append(agg["scrolls_i"])
-        destroys.append(agg["destroys_i"])
-        success.append(agg["success_i"])
-
-        for f in properties:
-            items_properties[f].append(agg[f])
-
-    properties_distribution: Dict[str, Dict] = {f: {} for f in properties}
-    for f in properties:
-        values_i = items_properties[f]
-        destroyed_items, good_items = split_value_by_type(destroys, values_i)
-        properties_distribution[f] = {
-            "destroyed": destroyed_items,
-            "good": good_items
-        }
-
-    return {
-        "items_distribution": items_distribution,
-        "scrolls_distribution": build_term_counts_dict(scrolls),
-        "items_properties": properties_distribution,
-        "destroy_distribution": destroys,
-    }
-
-Strategy = Callable[[Item], Scroll]
-StopCondition = Callable[[Item], bool]
 # ========== 策略工厂 ==========
+Strategy = Callable[[Item], Scroll | None]
 def strategy_fixed_sequence(
     seq: List[str],
     SCROLL_SET: Dict[str, Scroll]
@@ -114,7 +52,7 @@ def strategy_fixed_sequence(
 
     scrolls = [SCROLL_SET[name] for name in seq]
 
-    def strat(state: Item) -> Scroll:
+    def strat(state: Item) -> Scroll | None:
         if state.attempts_used < state.num_slots:
             idx = state.attempts_used
             if idx >= len(seq):
@@ -125,24 +63,27 @@ def strategy_fixed_sequence(
     return strat
 
 # ========== 目标工厂 ==========
-def stop_all_success() -> StopCondition:
-    # 目标：在不爆装情况下，全成功
+TargetCondition = Callable[[Item], bool]
+def all_success() -> TargetCondition:
+    # 目标：在不爆装情况下，所有slots都成功
     def cond(state: Item) -> bool:
         return (np.sum(state.results_history) == state.num_slots) and (not state.destroyed)
     return cond
 
-def stop_atk_at_least(target_atk: int) -> StopCondition:
+def atk_at_least(target_atk: int) -> TargetCondition:
     # 目标：总攻击力达到阈值（不爆装）
     def cond(state: Item) -> bool:
         return (state.atk_value >= target_atk) and (not state.destroyed)
     return cond
 
 # ========== 流程工厂 ==========
-def stop_when_fail_or_consume_all_slots(
-    strategy: Strategy,
-    stop_condition: StopCondition,
-    stop_if_fail: bool = False, # 是否失败就不再砸卷
-) -> list:
+Procedure = Callable[[np.random.Generator, Item], list]
+def basic_procedure(
+    strategy: Strategy, # 砸卷策略
+    target_condition: TargetCondition, # 该次模拟的目标
+    finish_one_item: Callable[[Item], bool] | None = None, # 每件装备的砸卷停止条件
+) -> Procedure:
+    # 运行砸卷过程：按策略逐次选择卷轴，直到满足停止策略（可选）或用尽所有可用槽位
 
     def run_procedure(rng: np.random.Generator,
                     item_template: Item,
@@ -181,71 +122,137 @@ def stop_when_fail_or_consume_all_slots(
                         item_state.destroyed = True
                         break
                     
-                    # 新策略：只要失败，就不再继续砸
-                    if stop_if_fail:
-                        break
+                # 可插拔的“失败即停”逻辑
+                if finish_one_item is not None and finish_one_item(item_state):
+                    break
 
             all_items_list.append(item_state)
             # 完成该装备的一轮砸卷后
-            if stop_condition(item_state):
+            if target_condition(item_state):
                 return all_items_list
     
     return run_procedure
 
 def stop_on_first_fail(
     strategy: Strategy,
-    stop_condition: StopCondition,
-) -> list:
+    target_condition: TargetCondition,
+) -> Procedure:
+    # 第一次失败停止继续对该装备砸卷，后续失败依然继续
 
-    def run_procedure(rng: np.random.Generator,
-                    item_template: Item,
-    ):
-        all_items_list = []
+    def stop_condition(item_state: Item) -> bool:
+        if not item_state.results_history[0]:
+            return True
+        else:
+            return False
 
-        while True:
+    return basic_procedure(
+        strategy,
+        target_condition,
+        stop_condition
+    )
 
-            item_state = copy.deepcopy(item_template)
-            # 对每件装备的砸卷处理
-            while item_state.attempts_used < item_state.num_slots:
-                scroll = strategy(item_state)
+def stop_if_fail(
+    strategy: Strategy,
+    target_condition: TargetCondition,
+) -> Procedure:
+    # 一旦失败就停止继续对该装备砸卷
 
-                # 记录本次使用的卷轴
-                item_state.history.append(scroll.name)
+    def stop_condition(item_state: Item) -> bool:
+        if all(item_state.results_history):
+            return False
+        else:
+            return True
 
-                # 消耗一次尝试
-                item_state.attempts_used += 1
+    return basic_procedure(
+        strategy,
+        target_condition,
+        stop_condition
+    )
 
-                # 判定
-                if rng.random() < scroll.success_p:
-                    item_state.atk_value += scroll.atk_value
-                    item_state.power_value += scroll.power_value
-                    item_state.ag_value += scroll.ag_value
-                    item_state.int_value += scroll.int_value
-                    item_state.lucky_value += scroll.lucky_value
+def stop_property_value_at_least(
+    strategy: Strategy,
+    target_condition: TargetCondition,
+    property_name: str,
+    property_value: int
+) -> Procedure:
+    # 一旦失败就停止继续对该装备砸卷
 
-                    item_state.results_history.append(True)
-                else:
-                    item_state.results_history.append(False)
+    def stop_condition(item_state: Item) -> bool:
+        if getattr(item_state, property_name)>=property_value:
+            return True
+        else:
+            return False
 
-                    # 判定该装备是否消失
-                    if scroll.destroy_on_fail_p > 0 and (rng.random() < scroll.destroy_on_fail_p):
-                        item_state.destroyed = True
-                        break
-                    
-                    # 第一次失败就不砸了
-                    if item_state.attempts_used == 1:
-                        break
+    return basic_procedure(
+        strategy,
+        target_condition,
+        stop_condition
+    )
 
-            all_items_list.append(item_state)
-            # 完成该装备的一轮砸卷后
-            if stop_condition(item_state):
-                return all_items_list
-    
-    return run_procedure
+
+# ========== Monte Carlo ==========
+from tqdm import tqdm
+def monte_carlo_mix(
+    rng: random.Generator,
+    num_success_items: int,
+    item_state: Item,
+    Procedure: Procedure,
+    properties: List[str] = ["atk_value", "power_value", "ag_value", "int_value", "lucky_value"]
+) -> Dict[str, Any]:
+
+    items_distribution: List[int] = []
+    scrolls: List[List[str]] = []
+    destroys: List[List[bool]] = []
+    success: List[List[int]] = []
+    items_properties: Dict[str, List[List[int]]] = {
+            f: [] for f in properties
+    }
+
+    def aggregate_batch(items_list: List[Item]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        out["scrolls_i"]  = [h for item in items_list for h in item.history]
+        out["destroys_i"] = [item.destroyed for item in items_list]
+        out["success_i"]  = [int(np.sum(item.results_history)) for item in items_list]
+        for f in properties:
+            out[f] = [getattr(item, f) for item in items_list]
+        return out
+
+    # 每次试验的类型计数
+    for _ in tqdm(range(num_success_items), desc="Monte Carlo"):
+        items_list = Procedure(rng, item_state)
+        
+        # statistics
+        items_distribution.append(len(items_list))
+
+        # List to Dict
+        agg = aggregate_batch(items_list)
+
+        scrolls.append(agg["scrolls_i"])
+        destroys.append(agg["destroys_i"])
+        success.append(agg["success_i"])
+
+        for f in properties:
+            items_properties[f].append(agg[f])
+
+    properties_distribution: Dict[str, Dict] = {f: {} for f in properties}
+    for f in properties:
+        values_i = items_properties[f]
+        destroyed_items, good_items = split_value_by_type(destroys, values_i)
+        properties_distribution[f] = {
+            "destroyed": destroyed_items,
+            "good": good_items
+        }
+
+    return {
+        "items_distribution": items_distribution,
+        "scrolls_distribution": build_term_counts_dict(scrolls),
+        "items_properties": properties_distribution,
+        "destroy_distribution": destroys,
+    }
 
 # ========== Example Running ==========
-from src.monte_carlo import stop_all_success, stop_atk_at_least, strategy_fixed_sequence, monte_carlo_mix
-from src.monte_carlo import stop_when_fail_or_consume_all_slots, stop_on_first_fail
+from src.monte_carlo import all_success, atk_at_least, strategy_fixed_sequence, monte_carlo_mix
+from src.monte_carlo import stop_if_fail, stop_on_first_fail
 import matplotlib.pyplot as plt
 from src.plot import create_figure
 
@@ -341,13 +348,13 @@ def main(scroll_list, item_state, item_price):
     rng = np.random.default_rng(seed)
     trials = 100000
 
-    target = stop_all_success()
+    target = all_success()
     strat1 = strategy_fixed_sequence(scroll_list, SCROLL_SET)
 
-    Procedure = stop_when_fail_or_consume_all_slots(strat1, target, stop_if_fail=True)
+    proc1 = stop_if_fail(strat1, target)
     # Procedure = stop_on_first_fail(strat1, target)
     # item_state = Item("BrownGrove", num_slots=7)
-    results = monte_carlo_mix(rng, trials, item_state, Procedure, properties=["atk_value"])
+    results = monte_carlo_mix(rng, trials, item_state, proc1, properties=["atk_value"])
     max_attack = np.max(results['items_properties']['atk_value']['good'])
     print("")
 

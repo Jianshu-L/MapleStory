@@ -1,6 +1,26 @@
+from datetime import datetime
 import numpy as np
 from typing import List
 from collections import Counter, defaultdict
+
+def flatten_list(nested_list: list) -> list:
+    """  
+    Flattens a nested list using recursion.  
+
+    Args:  
+        nested_list: The nested list to flatten.  
+
+    Returns:  
+        A flattened list.  
+    """
+    flattened = []
+    for item in nested_list:
+        if isinstance(item, list):  # Check if the item is a list
+            # Recursively flatten the sublist
+            flattened.extend(flatten_list(item))
+        else:
+            flattened.append(item)
+    return flattened
 
 def build_term_counts_dict(data):
     n = len(data)  # 20000
@@ -30,3 +50,60 @@ def split_value_by_type(
     type_false_value = values[~types]
 
     return type_true_value, type_false_value
+
+def print_dict_struct(dict_data, date_format='%Y-%m-%d', indent_level=-1):
+    """  
+    Print the structure of a dictionary.  
+
+    This function traverses the input dictionary, printing out the keys and their corresponding values.   
+    If a key is a valid date in the specified format, it will be skipped in the printing process.   
+    It identifies NumPy arrays and prints their shapes, while also indicating the type of other values.  
+
+    Args:  
+        dict_data (dict): The dictionary to process and print.  
+        date_format (str): The date format to check against (default is '%Y-%m-%d').  
+        indent_level (int): The current indentation level for nested dictionaries (default is -1).  
+
+    Returns:  
+        None  
+    """
+    skip = False
+    indent_level += 1
+
+    for key, value in dict_data.items():
+        if skip:
+            continue
+
+        if isinstance(value, dict):
+            print(f"{' ' * 2*indent_level}- {key}")
+            print_dict_struct(value, date_format,
+                              indent_level)  # Recursive call
+        else:
+            if isinstance(value, np.ndarray):
+                print(
+                    f"{' ' * 2*indent_level}- {key}: A Numpy array with shape {value.shape}")
+            elif isinstance(value, (int,float)):
+                print(
+                    f"{' ' * 2*indent_level}- {key}: {value}")
+            else:
+                print(f"{' ' * 2*indent_level}- {key}: {type(value)}")
+
+        def is_like_n_format(num_str: str) -> bool:
+            if num_str.startswith("n") and num_str[1:].isdigit():
+                return True
+            return False
+
+        try: 
+            # Check if the key is int
+            if isinstance(key, int):
+                skip = True
+                continue
+            # Check if the key is a neuron index
+            if is_like_n_format(str(key)):
+                skip = True
+                continue
+            # Check if the key is a valid date format
+            datetime.strptime(str(key), date_format)
+            skip = True
+        except ValueError:
+            skip = False
