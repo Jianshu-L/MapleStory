@@ -73,6 +73,21 @@ class GroupReport:
         self.warnings.append(msg)
 
 # ---------- Core pipeline ----------
+def get_job_from_pid(today_pids: list, index_map: Dict[str, Tuple[str, str]]):
+    repo_id = list(index_map.keys())
+    repo_jobs = [i[0] for i in index_map.values()]
+
+    buckets_job = []
+    for pid in today_pids:
+        index_list = find_contain_index(repo_id, pid)
+        if index_list:
+            if len(index_list) != 1:
+                raise ValueError("Something Wrong")
+            buckets_job.append(repo_jobs[index_list[0]])
+        else:
+            buckets_job.append("")
+        
+    return buckets_job
 
 def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: GroupReport) -> Dict[str, str]:
     """
@@ -130,7 +145,7 @@ class TeamSpec:
 
 def form_team(spec: TeamSpec, buckets: Dict[str, List[str]], rng: random.Random) -> Tuple[List[str], List[str], bool]:
     team_ids: List[str] = []
-    team_jobs: List[str] = []
+    # team_jobs_type: List[str] = []
 
     def take(role: str, count: int) -> int:
         taken = 0
@@ -139,7 +154,7 @@ def form_team(spec: TeamSpec, buckets: Dict[str, List[str]], rng: random.Random)
             if pid is None:
                 break
             team_ids.append(pid)
-            team_jobs.append(role)
+            # team_jobs_type.append(role)
             taken += 1
         return taken
 
@@ -159,19 +174,21 @@ def form_team(spec: TeamSpec, buckets: Dict[str, List[str]], rng: random.Random)
     else:
         full = True
 
+    # team_jobs
+    team_jobs = get_job_from_pid(team_ids, index_map)
     return team_ids, team_jobs, full
 
 def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.Random) -> Tuple[List[List[str]], List[List[str]]]:
     """
     将你原先的四队策略以更清晰的方式实现：
-    1) 第一队: 奶1 + 拳1 + 火1 + 近战3
+    1) 第一队: 奶1 + 拳1 + 火1 + 船1 + 近战2
     2) 第二队: 奶1 + 眼1 + (优先远程4, 不够用眼补齐至4)
-    3) 第三队: 奶1 + 输出
+    3) 第三队: 奶1 + 火1 + 近战
     4) 第四队: CSV 中 today_map 但未被前3队使用的(含未知/未映射)
     """
     num_member = 6
 
-    # 1) 第一队
+    # 1) 第一队 奶+火+拳+战士（洗澡）
     team1, job1 = [], []
     spec = TeamSpec(main_character=("奶", 1))
     team_ids, team_jobs, full = form_team(spec, buckets, rng)
@@ -193,19 +210,19 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
     job1.append(team_jobs)
     if not full:
         report.add_warning(f"Team1缺火")
-    
+
     n = num_member - len(team1)
-    spec = TeamSpec(main_character=("近战", n))
+    spec = TeamSpec(main_character=("战士", n))
     team_ids, team_jobs, full = form_team(spec, buckets, rng)
     team1.append(team_ids)
     job1.append(team_jobs)
     if not full:
-        report.add_warning(f"Team1近战人不满")
+        report.add_warning(f"Team1人不满")
 
     team1_flatten = flatten_list(team1)
     job1_flatten = flatten_list(job1)
 
-    # 2) 第二队: 奶1 + 眼1 + 远程/眼共4
+    # 2) 第二队: 奶 + 眼 + 远程（船，标等）
     team2, job2 = [], []
     spec = TeamSpec(main_character=("奶", 1))
     team_ids, team_jobs, full = form_team(spec, buckets, rng)
@@ -220,12 +237,6 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
     job2.append(team_jobs)
     if not full:
         report.add_warning(f"Team2缺眼")
-    
-    pid = pop_random(buckets.get("火", []), rng=rng)
-    if pid is None:
-        report.add_warning("Team2缺火")
-    else:
-        team2.append(pid); job2.append("火")
 
     n = num_member - len(team2)
     spec = TeamSpec(main_character=("远程", n), fallback="眼")
@@ -238,7 +249,7 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
     team2_flatten = flatten_list(team2)
     job2_flatten = flatten_list(job2)
 
-    # 3) 第三队: 奶1 + 火 + 优先高输出
+    # 3) 第三队: 奶+火+远程小脆皮+其他
     team3, job3 = [], []
     pid = pop_random(buckets.get("奶", []), rng=rng)
     if pid is None:
@@ -252,9 +263,9 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
     else:
         team3.append(pid); job3.append("火")
     
-    # 剩余输出
+    # 输出
     n = num_member - len(team3)
-    spec = TeamSpec(main_character=("近战", n), fallback="眼")
+    spec = TeamSpec(main_character=("远程", n), fallback="眼")
     team_ids, team_jobs, full = form_team(spec, buckets, rng)
     team3.append(team_ids)
     job3.append(team_jobs)
@@ -264,7 +275,7 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
     team3_flatten = flatten_list(team3)
     job3_flatten = flatten_list(job3)
 
-    # 4) 第四队: 奶1 + 5输出
+    # 4) 第四队: 奶 + 刀 + 火
     team4, job4 = [], []
     pid = pop_random(buckets.get("奶", []), rng=rng)
     if pid is None:
@@ -274,7 +285,7 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
 
     # 剩余输出
     n = num_member - len(team4)
-    spec = TeamSpec(main_character=("近战", n), fallback="眼")
+    spec = TeamSpec(main_character=("刀", n), fallback="火")
     team_ids, team_jobs, full = form_team(spec, buckets, rng)
     team4.append(team_ids)
     job4.append(team_jobs)
@@ -290,7 +301,7 @@ def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.R
     if pid is None:
         report.add_warning("Team5缺奶")
     else:
-        team4.append(pid); job4.append("奶")
+        team5.append(pid); job5.append("奶")
 
     # 将剩余所有人塞进5队
     for role, ids in buckets.items():
@@ -307,7 +318,7 @@ def run(csv_path: str, ms: MappingSource, *, random_seed: int = 2025) -> GroupRe
     rng = random.Random(random_seed)
     report = GroupReport()
 
-    index_map = build_index(ms)
+    # index_map = build_index(ms)
 
     today_map = map_today_ids(csv_path, index_map, report)
     buckets = bucket_by_job_type(today_map)
@@ -373,8 +384,12 @@ id = ["千万恶霸",
 "桥本奈奈未",
 "日落沙滩前",
 "情人游天地",
-"朗姆柠梨",
-"一天也"
+"雪梨",
+"一天也",
+"花生酱",
+"百利甜",
+"一只小奶爸",
+"炖猪魔王"
 ]
 
 job = ["奶",
@@ -415,11 +430,15 @@ job = ["奶",
 "火",
 "船",
 "火",
+"标",
+"饺子",
+"奶",
+"饺子",
 ]
 
 job_type = ["奶",
-"近战",
-"近战",
+"刀",
+"刀",
 "远程",
 "眼",
 "冰雷",
@@ -429,21 +448,21 @@ job_type = ["奶",
 "眼",
 "眼",
 "眼",
-"近战",
+"刀",
 "眼",
 "拳",
-"近战",
+"刀",
 "眼",
-"近战",
+"战士",
 "奶",
-"近战",
+"刀",
 "奶",
-"近战",
+"战士",
 "眼",
-"近战",
+"刀",
 "火",
 "眼",
-"近战",
+"刀",
 "火",
 "冰雷",
 "奶",
@@ -451,10 +470,14 @@ job_type = ["奶",
 "拳",
 "眼",
 "眼",
-"近战",
+"战士",
 "火",
 "远程",
 "火",
+"远程",
+"战士",
+"奶",
+"战士",
 ]
 
 ms = MappingSource(
@@ -462,6 +485,8 @@ ids=id,                # 你的主数据 id 列表
 jobs=job,              # 可不使用但可保留
 job_types=job_type,    # 与 id 对齐的职业类型
 )
+index_map = build_index(ms)
+
 from openpyxl import load_workbook
 from datetime import datetime
 if __name__ == "__main__":
@@ -471,7 +496,9 @@ if __name__ == "__main__":
     job_types=job_type,    # 与 id 对齐的职业类型
     )
 
-    report = run("temp.csv", ms, random_seed=200)
+    now = datetime.now()
+    random_seed = f"{now.strftime('%Y%m%d')}"
+    report = run("temp.csv", ms, random_seed=random_seed)
     # 问题汇总
     print("Warnings:", report.warnings)
     print("Errors:", report.errors)
@@ -488,7 +515,7 @@ if __name__ == "__main__":
     now = datetime.now()
     alphbet = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"], ["I", "J"]]
 
-    for i in range(6):
+    for i in range(10):
         for t_i, (id_i, job_i) in enumerate(zip(report.grouped, report.grouped_jobs)):
             if i >= len(id_i):
                 ws[f'{alphbet[t_i][0]}{i+2}'].value = ""
