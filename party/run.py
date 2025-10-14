@@ -427,4 +427,10 @@ if __name__ == "__main__":
     id_list = today_members[job]
     for id_i, id in enumerate(id_list):
         ws[f'{letters[id_i+1]}{last_index+1}'].value = id
+
     wb.save(f"{now.strftime('%Y%m%d')}一条.xlsx")
+
+    df = pd.read_excel(f"{now.strftime('%Y%m%d')}一条.xlsx", sheet_name="Sheet1", header=None)
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    print("====================")
+    print(df.to_string(header=False, index=False, na_rep=""))
