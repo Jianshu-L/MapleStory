@@ -73,6 +73,16 @@ class GroupReport:
         self.warnings.append(msg)
 
 # ---------- Core pipeline ----------
+def handle_find_contain_index_bug(pid: str, repo_id: List[str], index_list: List[int], report: GroupReport):
+    possible_ids = [repo_id[i] for i in index_list]
+    sorted_possible_ids = sorted(possible_ids, key=len, reverse=True)
+    report.invalid_ids.append((pid, sorted_possible_ids))
+    report.add_warning(f"duplicated matching in Repo: {pid} {sorted_possible_ids}")
+
+    argmax = np.argmax([len(w) for w in possible_ids])
+    index_list[0] = index_list[argmax]
+    return index_list
+
 def get_job_from_pid(today_pids: list, index_map: Dict[str, Tuple[str, str]]):
     repo_id = list(index_map.keys())
     repo_jobs = [i[0] for i in index_map.values()]
@@ -116,7 +126,8 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
         index_list = find_contain_index(repo_id, pid)
         if index_list:
             if len(index_list) != 1:
-                raise ValueError("Something Wrong")
+                index_list = handle_find_contain_index_bug(pid, repo_id, index_list, report)
+
             job, job_type = index_map[repo_id[index_list[0]]]
             today_map[repo_id[index_list[0]]] = job or ""
         else:
@@ -363,6 +374,7 @@ def get_key_by_value(d, value):
 from openpyxl import load_workbook
 from datetime import datetime
 import string
+from tabulate import tabulate
 if __name__ == "__main__":
     df = pd.read_csv("repo.csv")
     id = df.id.tolist()
@@ -416,21 +428,24 @@ if __name__ == "__main__":
             last_index += 1
             i = last_index
 
-        ws[f'{letters[0]}{i+1}'].value = job
+        ws[f'{letters[i]}1'].value = job
 
         for id_i, id in enumerate(id_list):
-            ws[f'{letters[id_i+1]}{i+1}'].value = id
+            ws[f'{letters[i]}{id_i+2}'].value = id
 
     job = "单挂"
-    ws[f'{letters[0]}{last_index+1}'].value = job
+    ws[f'{letters[last_index+1]}1'].value = job
 
     id_list = today_members[job]
     for id_i, id in enumerate(id_list):
-        ws[f'{letters[id_i+1]}{last_index+1}'].value = id
+        ws[f'{letters[last_index+1]}{id_i+2}'].value = id
 
     wb.save(f"{now.strftime('%Y%m%d')}一条.xlsx")
-
+    
+    # print
     df = pd.read_excel(f"{now.strftime('%Y%m%d')}一条.xlsx", sheet_name="Sheet1", header=None)
-    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    df = df.fillna("")
+    num_members = (df != "").sum().sum()-df.shape[1]
     print("====================")
-    print(df.to_string(header=False, index=False, na_rep=""))
+    print(f"Total Number of Members: {num_members}")
+    print(tabulate(df[1:], headers=df.iloc[0,:], tablefmt="github"))
