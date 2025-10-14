@@ -117,8 +117,8 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
         if index_list:
             if len(index_list) != 1:
                 raise ValueError("Something Wrong")
-            job, job_type = index_map[repo_id[index_list[0]]]
-            today_map[repo_id[index_list[0]]] = job or ""
+            _, job_type = index_map[repo_id[index_list[0]]]
+            today_map[repo_id[index_list[0]]] = job_type or ""
         else:
             report.unmapped_ids.append(pid)
             today_map[pid] = ""  # 未映射先留空，后续会进入“未知”类
@@ -357,28 +357,30 @@ def run(csv_path: str, ms: MappingSource, *, random_seed: int = 2025) -> GroupRe
 
     return report
 
-def get_key_by_value(d, value):
-    return [k for k, v in d.items() if v == value]
+df = pd.read_csv("repo.csv")
+id = df.id.tolist()
+job = df.job.tolist()
+job_type = df.job_type.tolist()
+
+ms = MappingSource(
+ids=id,                # 你的主数据 id 列表
+jobs=job,              # 可不使用但可保留
+job_types=job_type,    # 与 id 对齐的职业类型
+)
+index_map = build_index(ms)
 
 from openpyxl import load_workbook
 from datetime import datetime
-import string
 if __name__ == "__main__":
-    df = pd.read_csv("repo.csv")
-    id = df.id.tolist()
-    job = df.job.tolist()
-    job_type = df.job_type.tolist()
-
     ms = MappingSource(
     ids=id,                # 你的主数据 id 列表
     jobs=job,              # 可不使用但可保留
     job_types=job_type,    # 与 id 对齐的职业类型
     )
-    index_map = build_index(ms)
 
-    report = GroupReport()
-    today_maps = map_today_ids("temp.csv", index_map, report)
-
+    now = datetime.now()
+    random_seed = int(now.strftime('%Y%m%d'))
+    report = run("temp.csv", ms, random_seed=random_seed)
     # 问题汇总
     print("Warnings:", report.warnings)
     print("Errors:", report.errors)
@@ -386,45 +388,30 @@ if __name__ == "__main__":
     print("Invalid:", report.invalid_ids)
     print("Leftover:", report.leftover_buckets)
 
-    today_members = {}
-    for job_i in np.unique(list(today_maps.values())):
-        if not job_i:
-            key = "单挂"
-        else:
-            key = str(job_i)
-
-        today_members[key] = get_key_by_value(today_maps, job_i)
-
-    letters = string.ascii_uppercase
-    job_order = ["奶", "火", '圣骑', '拳', '弩', '船', '饺子', '刀']
-
+    # write to excel
     # 1) 载入模板
-    wb = load_workbook("一条分组.xlsx")
+    wb = load_workbook("一条排班.xlsx")
     ws = wb["Sheet1"]  # 替换为你的工作表名
 
     # 2) 写入文件
     now = datetime.now()
+    alphbet = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"], ["I", "J"]]
 
-    last_index = len(job_order)-1
-    for job, id_list in today_members.items():
-        if job == "单挂":
-            continue
+    for i in range(10):
+        for t_i, (id_i, job_i) in enumerate(zip(report.grouped, report.grouped_jobs)):
+            if i >= len(id_i):
+                ws[f'{alphbet[t_i][0]}{i+2}'].value = ""
+                ws[f'{alphbet[t_i][1]}{i+2}'].value = ""
+            else:
+                ws[f'{alphbet[t_i][0]}{i+2}'].value = id_i[i]
+                ws[f'{alphbet[t_i][1]}{i+2}'].value = job_i[i]
 
-        if job in job_order:
-            i = job_order.index(job)
-        else:
-            last_index += 1
-            i = last_index
+    
 
-        ws[f'{letters[0]}{i+1}'].value = job
-
-        for id_i, id in enumerate(id_list):
-            ws[f'{letters[id_i+1]}{i+1}'].value = id
-
-    job = "单挂"
-    ws[f'{letters[0]}{last_index+1}'].value = job
-
-    id_list = today_members[job]
-    for id_i, id in enumerate(id_list):
-        ws[f'{letters[id_i+1]}{last_index+1}'].value = id
     wb.save(f"{now.strftime('%Y%m%d')}一条.xlsx")
+
+    for t_i, (id_i, job_i) in enumerate(zip(report.grouped, report.grouped_jobs)):
+        print(f"{t_i+1}队")
+        print(f"{id_i}")
+        print(f"{job_i}")
+        print(f"==========")
