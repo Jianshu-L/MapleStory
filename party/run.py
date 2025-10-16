@@ -122,6 +122,11 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
 
         seen.add(pid)
         
+        if "单挂" in pid:
+            report.unmapped_ids.append(pid)
+            today_map[pid] = ""
+            continue
+
         repo_id = list(index_map.keys())
         index_list = find_contain_index(repo_id, pid)
         if index_list:
@@ -389,7 +394,8 @@ if __name__ == "__main__":
     index_map = build_index(ms)
 
     report = GroupReport()
-    today_maps = map_today_ids("temp.csv", index_map, report)
+    csv_path = "temp.csv"
+    today_maps = map_today_ids(csv_path, index_map, report)
 
     # 问题汇总
     print("Warnings:", report.warnings)
@@ -446,6 +452,11 @@ if __name__ == "__main__":
     df = pd.read_excel(f"{now.strftime('%Y%m%d')}一条.xlsx", sheet_name="Sheet1", header=None)
     df = df.fillna("")
     num_members = (df != "").sum().sum()-df.shape[1]
+
+    df_raw = pd.read_csv(csv_path, header=None)
+    if num_members != df_raw.shape[0]:
+        Warning("Final excel sheet produced different length; check data shape.")
+
     print("====================")
     print(f"Total Number of Members: {num_members}")
     print(tabulate(df[1:], headers=df.iloc[0,:], tablefmt="github"))
