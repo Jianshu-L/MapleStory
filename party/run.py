@@ -24,6 +24,9 @@ def pop_random(lst: List, *, rng: random.Random) -> Optional[str]:
     lst[i], lst[-1] = lst[-1], lst[i]
     return lst.pop()
 
+def get_key_by_value(d, value):
+    return [k for k, v in d.items() if v == value]
+
 # ---------- Mapping inputs to jobs ----------
 
 @dataclass
@@ -59,7 +62,7 @@ class GroupReport:
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     unmapped_ids: List[str] = field(default_factory=list)   # CSV 中找不到映射的 ID
-    invalid_ids: List[str] = field(default_factory=list)    # 空/非法/重复 ID
+    invalid_ids: List[str|tuple] = field(default_factory=list)    # 空/非法/重复 ID
     leftover_buckets: Dict[str, List[str]] = field(default_factory=dict)  # 分组后仍剩余的人
     grouped: List[List[str]] = field(default_factory=list)  # 各队成员 ID
     grouped_jobs: List[List[str]] = field(default_factory=list)  # 各队成员的 job_type
@@ -82,22 +85,6 @@ def handle_find_contain_index_bug(pid: str, repo_id: List[str], index_list: List
     argmax = np.argmax([len(w) for w in possible_ids])
     index_list[0] = index_list[argmax]
     return index_list
-
-def get_job_from_pid(today_pids: list, index_map: Dict[str, Tuple[str, str]]):
-    repo_id = list(index_map.keys())
-    repo_jobs = [i[0] for i in index_map.values()]
-
-    buckets_job = []
-    for pid in today_pids:
-        index_list = find_contain_index(repo_id, pid)
-        if index_list:
-            if len(index_list) != 1:
-                raise ValueError("Something Wrong")
-            buckets_job.append(repo_jobs[index_list[0]])
-        else:
-            buckets_job.append("")
-        
-    return buckets_job
 
 def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: GroupReport) -> Dict[str, str]:
     """
@@ -123,7 +110,6 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
         seen.add(pid)
         
         if "单挂" in pid:
-            report.unmapped_ids.append(pid)
             today_map[pid] = ""
             continue
 
@@ -134,7 +120,7 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
                 index_list = handle_find_contain_index_bug(pid, repo_id, index_list, report)
 
             job, job_type = index_map[repo_id[index_list[0]]]
-            today_map[repo_id[index_list[0]]] = job or ""
+            today_map[repo_id[index_list[0]]] = job
         else:
             report.unmapped_ids.append(pid)
             today_map[pid] = ""  # 未映射先留空，后续会进入“未知”类
@@ -144,237 +130,6 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
         report.add_warning("CSV squeeze produced different length; check data shape.")
 
     return today_map
-
-def bucket_by_job_type(today_map: Dict[str, str]) -> Dict[str, List[str]]:
-    buckets = defaultdict(list)
-    for pid, jt in today_map.items():
-        key = jt.strip() if isinstance(jt, str) else ""
-        buckets[key].append(pid)
-    return buckets
-
-@dataclass
-class TeamSpec:
-    # 用声明式“配方”定义每队所需角色，以及如何兜底
-    # items 是按顺序的需求：("奶", 1) 表示抽取1人奶；("近战", 3) 表示抽3个近战
-    main_character: Tuple[str, int]
-    fallback: Optional[str] = None  # 可选：当主要类型空时，用次选类型补齐
-
-def form_team(spec: TeamSpec, buckets: Dict[str, List[str]], rng: random.Random) -> Tuple[List[str], List[str], bool]:
-    team_ids: List[str] = []
-    # team_jobs_type: List[str] = []
-
-    def take(role: str, count: int) -> int:
-        taken = 0
-        for _ in range(count):
-            pid = pop_random(buckets.get(role, []), rng=rng)
-            if pid is None:
-                break
-            team_ids.append(pid)
-            # team_jobs_type.append(role)
-            taken += 1
-        return taken
-
-    # 先按主需求取
-    role = spec.main_character[0]
-    n = spec.main_character[1]
-    got = take(role, n)
-    # 不够的从备选职业取
-    if got < n and spec.fallback:
-        fb_role = spec.fallback
-        fb_got = take(fb_role, n-got)
-        got += fb_got
-
-    # check number of member
-    if got != n:
-        full = False
-    else:
-        full = True
-
-    # team_jobs
-    team_jobs = get_job_from_pid(team_ids, index_map)
-    return team_ids, team_jobs, full
-
-def form_teams(buckets: Dict[str, List[str]], report: GroupReport, rng: random.Random) -> Tuple[List[List[str]], List[List[str]]]:
-    """
-    将你原先的四队策略以更清晰的方式实现：
-    1) 第一队: 奶1 + 拳1 + 火1 + 船1 + 近战2
-    2) 第二队: 奶1 + 眼1 + (优先远程4, 不够用眼补齐至4)
-    3) 第三队: 奶1 + 火1 + 近战
-    4) 第四队: CSV 中 today_map 但未被前3队使用的(含未知/未映射)
-    """
-    num_member = 6
-
-    # 1) 第一队 奶+火+拳+圣骑+战士（洗澡）
-    team1, job1 = [], []
-    spec = TeamSpec(main_character=("奶", 1))
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team1.append(team_ids)
-    job1.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team1缺奶")
-
-    spec = TeamSpec(main_character=("拳", 1))
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team1.append(team_ids)
-    job1.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team1缺拳")
-
-    spec = TeamSpec(main_character=("火", 1))
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team1.append(team_ids)
-    job1.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team1缺火")
-
-    n = num_member - len(team1)
-    spec = TeamSpec(main_character=("战士", n))
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team1.append(team_ids)
-    job1.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team1人不满")
-
-    team1_flatten = flatten_list(team1)
-    job1_flatten = flatten_list(job1)
-
-    # 2) 第二队: 奶 + 眼 + 远程（船，标等）
-    team2, job2 = [], []
-    spec = TeamSpec(main_character=("奶", 1))
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team2.append(team_ids)
-    job2.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team2缺奶")
-
-    spec = TeamSpec(main_character=("眼", 1))
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team2.append(team_ids)
-    job2.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team2缺眼")
-
-    n = num_member - len(team2)
-    spec = TeamSpec(main_character=("远程", n), fallback="眼")
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team2.append(team_ids)
-    job2.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team2远程人不满")
-
-    team2_flatten = flatten_list(team2)
-    job2_flatten = flatten_list(job2)
-
-    # 3) 第三队: 奶+火+远程小脆皮+其他
-    team3, job3 = [], []
-    pid = pop_random(buckets.get("奶", []), rng=rng)
-    if pid is None:
-        report.add_warning("Team3缺奶")
-    else:
-        team3.append(pid); job3.append("奶")
-
-    pid = pop_random(buckets.get("火", []), rng=rng)
-    if pid is None:
-        report.add_warning("Team3缺火")
-    else:
-        team3.append(pid); job3.append("火")
-    
-    # 输出
-    n = num_member - len(team3)
-    spec = TeamSpec(main_character=("远程", n), fallback="眼")
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team3.append(team_ids)
-    job3.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team3输出人不满")
-
-    team3_flatten = flatten_list(team3)
-    job3_flatten = flatten_list(job3)
-
-    # 4) 第四队: 奶 + 刀 + 火
-    team4, job4 = [], []
-    pid = pop_random(buckets.get("奶", []), rng=rng)
-    if pid is None:
-        report.add_warning("Team4缺奶")
-    else:
-        team4.append(pid); job4.append("奶")
-
-    # 刀+火
-    n = num_member - len(team4)
-    spec = TeamSpec(main_character=("刀", n), fallback="火")
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team4.append(team_ids)
-    job4.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team4输出人不满")
-
-    # 剩余输出
-    n = num_member - len(team4)
-    spec = TeamSpec(main_character=("刀", n), fallback="战士")
-    team_ids, team_jobs, full = form_team(spec, buckets, rng)
-    team4.append(team_ids)
-    job4.append(team_jobs)
-    if not full:
-        report.add_warning(f"Team4输出人不满")
-
-    team4_flatten = flatten_list(team4)
-    job4_flatten = flatten_list(job4)
-
-    # 5) 第五队: 奶1 + 单挂 + 多出的人
-    team5, job5 = [], []
-    pid = pop_random(buckets.get("奶", []), rng=rng)
-    if pid is None:
-        report.add_warning("Team5缺奶")
-    else:
-        team5.append(pid); job5.append("奶")
-
-    # 将剩余所有人塞进5队
-    for role, ids in buckets.items():
-        while ids:
-            team5.append(ids.pop())
-            job5.append(role)
-
-    team5_flatten = flatten_list(team5)
-    job5_flatten = flatten_list(job5)
-
-    return [team1_flatten, team2_flatten, team3_flatten, team4_flatten, team5_flatten], [job1_flatten, job2_flatten, job3_flatten, job4_flatten, job5_flatten]
-
-def run(csv_path: str, ms: MappingSource, *, random_seed: int = 2025) -> GroupReport:
-    rng = random.Random(random_seed)
-    report = GroupReport()
-
-    # index_map = build_index(ms)
-
-    today_map = map_today_ids(csv_path, index_map, report)
-    buckets = bucket_by_job_type(today_map)
-
-    # 统计映射成功的人
-    mapped_ids = set(pid for pid, jt in today_map.items() if jt)
-    unknown_ids = [pid for pid, jt in today_map.items() if not jt]
-    if unknown_ids:
-        report.add_warning(f"{len(unknown_ids)} IDs have empty/unknown job_type.")
-
-    grouped, grouped_jobs = form_teams(buckets, report, rng)
-
-    # 统计余量（如果任何桶还有剩余，说明第3队没吃完所有人）
-    leftover = {role: ids[:] for role, ids in buckets.items() if ids}
-    if leftover:
-        report.leftover_buckets = leftover
-        report.add_warning(f"Leftover after forming teams: { {k: len(v) for k,v in leftover.items()} }")
-
-    report.grouped = grouped
-    report.grouped_jobs = grouped_jobs
-
-    # 最终人数校验：成功分组 + 单挂 应等于 CSV 读入有效行数
-    grouped_count = sum(len(t) for t in grouped)
-    csv_count = pd.read_csv(csv_path, header=None).shape[0]
-    if grouped_count != csv_count:
-        report.add_warning(f"Headcount mismatch: grouped={grouped_count}, csv={csv_count}")
-
-    return report
-
-def get_key_by_value(d, value):
-    return [k for k, v in d.items() if v == value]
 
 from openpyxl import load_workbook
 from datetime import datetime
@@ -459,4 +214,4 @@ if __name__ == "__main__":
 
     print("====================")
     print(f"Total Number of Members: {num_members}")
-    print(tabulate(df[1:], headers=df.iloc[0,:], tablefmt="github"))
+    print(tabulate(df[1:], headers=df.iloc[0,:].values.astype('str'), tablefmt="github"))
