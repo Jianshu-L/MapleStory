@@ -110,7 +110,11 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
         seen.add(pid)
         
         if "单挂" in pid:
-            today_map[pid] = ""
+            today_map[pid] = "单挂"
+            continue
+
+        if "护肩经验" in pid:
+            today_map[pid] = "单挂"
             continue
 
         repo_id = list(index_map.keys())
@@ -162,7 +166,7 @@ if __name__ == "__main__":
     today_members = {}
     for job_i in np.unique(list(today_maps.values())):
         if not job_i:
-            key = "单挂"
+            key = "未知"
         else:
             key = str(job_i)
 
@@ -183,6 +187,9 @@ if __name__ == "__main__":
         if job == "单挂":
             continue
 
+        if job == "未知":
+            continue
+        
         if job in job_order:
             i = job_order.index(job)
         else:
@@ -196,10 +203,17 @@ if __name__ == "__main__":
 
     job = "单挂"
     ws[f'{letters[last_index+1]}1'].value = job
-
     id_list = today_members[job]
     for id_i, id in enumerate(id_list):
         ws[f'{letters[last_index+1]}{id_i+2}'].value = id
+    last_index += 1
+
+    if "未知" in today_members:
+        job = "未知"
+        ws[f'{letters[last_index+1]}1'].value = job
+        id_list = today_members[job]
+        for id_i, id in enumerate(id_list):
+            ws[f'{letters[last_index+1]}{id_i+2}'].value = id
 
     wb.save(f"{now.strftime('%Y%m%d')}一条.xlsx")
     
