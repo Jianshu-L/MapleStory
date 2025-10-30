@@ -10,6 +10,7 @@ from utils import flatten_list
 # ---------- Helpers ----------
 
 def clean_id(x) -> str:
+    # 去掉首尾空白字符
     if pd.isna(x):
         return ""
     return str(x).strip()
@@ -24,36 +25,61 @@ def pop_random(lst: List, *, rng: random.Random) -> Optional[str]:
     lst[i], lst[-1] = lst[-1], lst[i]
     return lst.pop()
 
-def get_key_by_value(d, value):
-    return [k for k, v in d.items() if v == value]
+def get_key_by_value(key_list, value_list, value):
+    return [k for k, v in zip(key_list, value_list) if v == value]
 
 # ---------- Mapping inputs to jobs ----------
 
 @dataclass
 class MappingSource:
     # 基础数据源：并行数组或从外部注入的主数据
+    weights: List[int]      # 每个id的熟悉程度，越熟悉权重越大
     ids: List[str]          # 主数据中的 id 列表（去重后）
-    jobs: List[str]         # 对应岗位（可选）
-    job_types: List[str]    # 对应职业标签，如 "奶" "拳" "眼" "火" "近战" "远程"
+    jobs: List[str]         # 对应职业 e.g. "奶" "拳" "眼" "火" 
+    job_types: List[str]    # 对应职业标签，e.g. "近战" "远程"
 
-def build_index(ms: MappingSource) -> Dict[str, Tuple[str, str]]:
+    def __post_init__(self):
+        # 创建完就检查长度是否一致
+        self._check_lengths()
+
+    def _check_lengths(self):
+        lengths = [len(self.weights), len(self.ids), len(self.jobs), len(self.job_types)]
+        if len(set(lengths)) != 1:
+            raise ValueError(f"the length of data is different: weights={len(self.weights)}, ids={len(self.ids)}, jobs={len(self.jobs)}, job_types={len(self.job_types)}")
+
+    def sort_by_weight(self, reverse: bool = False):
+        """按权重排序，小的在前，大的在后（reverse=True 反转顺序）"""
+        sorted_data = sorted(zip(self.weights, self.ids, self.jobs, self.job_types),
+                             key=lambda x: x[0], reverse=reverse)
+        self.weights, self.ids, self.jobs, self.job_types = map(list, zip(*sorted_data))
+
+def build_index(repo_path: str="repo.csv") -> Tuple[Dict[str, Tuple[str, str, int]], MappingSource]:
     """
     将主数据 ids → (job, job_type) 的唯一映射构建出来。
     """
-    df = {}
+    df = pd.read_csv(repo_path)
+    ms = MappingSource(
+        weights=df.index.tolist(),
+        ids=df.id.tolist(),
+        jobs=df.job.tolist(),
+        job_types=df.job_type.tolist(),
+    )
+
+    results = {}
     for i, pid in enumerate(ms.ids):
         pid_clean = clean_id(pid)
         if not pid_clean:
             continue
-        if pid_clean in df:
+        if pid_clean in results:
             # 如有重复，raise warning and pass
             Warning(f"Dulicate Id {pid_clean} in repo, ignore")
             continue
 
         job = ms.jobs[i]
         job_type = ms.job_types[i]
-        df[pid_clean] = (job, job_type)
-    return df
+        weights = ms.weights[i]
+        results[pid_clean] = (job, job_type, weights)
+    return results, ms
 
 # ---------- Reporting ----------
 
@@ -86,97 +112,129 @@ def handle_find_contain_index_bug(pid: str, repo_id: List[str], index_list: List
     index_list[0] = index_list[argmax]
     return index_list
 
-def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: GroupReport) -> Dict[str, str]:
+import re
+def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], report: GroupReport) -> MappingSource:
     """
     读取 CSV, 按 index_map 将 today 的 id → job_type。
     找不到映射的, 记为 unmapped_ids; 空值记 invalid_ids; 映射不到 job_type 的给空字符串。
     """
-    df = pd.read_csv(csv_path, header=None)
+    df = pd.read_csv(csv_path, header=None, names=["line"], delimiter=r'\n', engine="python")
     raw_ids = np.squeeze(df.values).tolist()
     today_ids = [clean_id(x) for x in raw_ids]
 
-    today_map: Dict[str, str] = {}
-    seen = set()
+    pattern = re.compile(
+        r'(?<!\w)(' + '|'.join(re.escape(k) for k in index_map.keys()) + r')(?!\w)'
+    )
 
+    id_list = []
+    job_list = []
+    job_type_list = []
+    order_weights = []
     for pid in today_ids:
-        if not pid:
-            report.invalid_ids.append(pid)
-            continue
-        if pid in seen:
-            report.invalid_ids.append(pid)
-            report.add_warning(f"duplicated id in CSV: {pid}")
-            continue
+        # if not pid:
+        #     report.invalid_ids.append(pid)
+        #     continue
+        # if pid in seen:
+        #     report.invalid_ids.append(pid)
+        #     report.add_warning(f"duplicated id in CSV: {pid}")
+        #     continue
 
-        seen.add(pid)
+        # seen.add(pid)
         
         if "单挂" in pid:
-            today_map[pid] = "单挂"
+            id_list.append(pid)
+            job_list.append("单挂")
+            job_type_list.append("单挂")
+            order_weights.append(10000) # append a big value
             continue
 
         if "护肩经验" in pid:
-            today_map[pid] = "单挂"
+            id_list.append(pid)
+            job_list.append("单挂")
+            job_type_list.append("单挂")
+            order_weights.append(10000) # append a big value
             continue
 
         if "混次数" in pid:
-            today_map[pid] = "单挂"
+            id_list.append(pid)
+            job_list.append("单挂")
+            job_type_list.append("单挂")
+            order_weights.append(10000) # append a big value
             continue
 
         repo_id = list(index_map.keys())
-        index_list = find_contain_index(repo_id, pid)
-        if index_list:
-            if len(index_list) != 1:
-                index_list = handle_find_contain_index_bug(pid, repo_id, index_list, report)
-
-            job, job_type = index_map[repo_id[index_list[0]]]
-            if repo_id[index_list[0]] in today_map:
+        if pattern.findall(pid): # 精准匹配
+            id_match = pattern.findall(pid)
+            if len(id_match) == 1:
+                id_name = id_match[0]
+            else:
                 report.unmapped_ids.append(pid)
-                today_map[pid] = ""
-                report.add_warning(f"duplicated id in CSV: {pid}")
+
+                id_list.append(pid)
+                job_list.append("未知")
+                job_type_list.append("未知")
+                order_weights.append(10000) # append a big value
+                continue
+        else:
+            index_list = find_contain_index(repo_id, pid) # 模糊匹配
+            if index_list and len(index_list) == 1:
+                id_name = repo_id[index_list[0]]
+            else:
+                report.unmapped_ids.append(pid)
+
+                id_list.append(pid)
+                job_list.append("未知")
+                job_type_list.append("未知")
+                order_weights.append(10000) # append a big value
                 continue
 
-            today_map[repo_id[index_list[0]]] = job
-        else:
+        if id_name in id_list:
             report.unmapped_ids.append(pid)
-            today_map[pid] = ""  # 未映射先留空，后续会进入“未知”类
+            report.add_warning(f"duplicated id in CSV: {pid}")
+
+            id_list.append(pid)
+            job_list.append("未知")
+            job_type_list.append("未知")
+            order_weights.append(10000) # append a big value
+            continue
+        
+        job, job_type, weights = index_map[id_name]
+        id_list.append(id_name)
+        job_list.append(job)
+        order_weights.append(weights)
+        job_type_list.append(job_type)
 
     # 人数校验（可选）
     if len(today_ids) != df.shape[0]:
         report.add_warning("CSV squeeze produced different length; check data shape.")
+    
 
-    return today_map
+    today_ms = MappingSource(order_weights, id_list, job_list, job_type_list)
+    return today_ms
 
-def main(csv_path: str = "temp.csv"):
-    df = pd.read_csv("repo.csv")
-    id = df.id.tolist()
-    job = df.job.tolist()
-    job_type = df.job_type.tolist()
-
-    ms = MappingSource(
-    ids=id,                # 你的主数据 id 列表
-    jobs=job,              # 可不使用但可保留
-    job_types=job_type,    # 与 id 对齐的职业类型
-    )
-    index_map = build_index(ms)
+def main(csv_path: str = "temp.csv", repo_path: str="repo.csv"):
+    index_map, ms_data = build_index(repo_path)
 
     report = GroupReport()
-    today_maps = map_today_ids(csv_path, index_map, report)
+    today_ms = map_today_ids(csv_path, index_map, report)
+    today_ms.sort_by_weight()
+
+    today_maps: Dict[str, str] = {}
+    for i, id_i in enumerate(today_ms.ids):
+        today_maps[id_i] = today_ms.job_types[i]
 
     # 问题汇总
-    print("Warnings:", report.warnings)
     print("Errors:", report.errors)
     print("Unmapped:", report.unmapped_ids)
     print("Invalid:", report.invalid_ids)
     print("Leftover:", report.leftover_buckets)
 
-    today_members = {}
-    for job_i in np.unique(list(today_maps.values())):
-        if not job_i:
-            key = "未知"
-        else:
-            key = str(job_i)
+    today_members: Dict[str, List[str]] = {}
+    for job_i in np.unique(list(today_ms.jobs)):
+        key = str(job_i)
+        today_members[key] = get_key_by_value(today_ms.ids, today_ms.jobs, job_i)
 
-        today_members[key] = get_key_by_value(today_maps, job_i)
-    return today_members, report
+    return today_members, today_maps, report
 
 from openpyxl import load_workbook
 from datetime import datetime
@@ -194,7 +252,9 @@ parser.add_argument(
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    today_members, report = main(args.file)
+    today_members, today_maps, report = main(args.file)
+    for warning in report.warnings:
+        print("Warnings:", warning)
     
     letters = string.ascii_uppercase
     job_order = ["奶", "火", '圣骑', '拳', '弩', '船', '饺子', '刀']
@@ -245,9 +305,9 @@ if __name__ == "__main__":
     df = pd.read_excel(f"{now.strftime('%Y%m%d')}一条.xlsx", sheet_name="Sheet1", header=None)
     df = df.fillna("")
     num_members = (df != "").sum().sum()-df.shape[1]
-
-    csv_path = "temp.csv"
-    df_raw = pd.read_csv(csv_path, header=None)
+    
+    # check number of members
+    df_raw = pd.read_csv(args.file, header=None, names=["line"], delimiter=r'\n', engine="python")
     if num_members != df_raw.shape[0]:
         Warning("Final excel sheet produced different length; check data shape.")
 
