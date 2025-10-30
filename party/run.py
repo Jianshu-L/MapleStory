@@ -117,6 +117,10 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
             today_map[pid] = "单挂"
             continue
 
+        if "混次数" in pid:
+            today_map[pid] = "单挂"
+            continue
+
         repo_id = list(index_map.keys())
         index_list = find_contain_index(repo_id, pid)
         if index_list:
@@ -124,6 +128,12 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
                 index_list = handle_find_contain_index_bug(pid, repo_id, index_list, report)
 
             job, job_type = index_map[repo_id[index_list[0]]]
+            if repo_id[index_list[0]] in today_map:
+                report.unmapped_ids.append(pid)
+                today_map[pid] = ""
+                report.add_warning(f"duplicated id in CSV: {pid}")
+                continue
+
             today_map[repo_id[index_list[0]]] = job
         else:
             report.unmapped_ids.append(pid)
@@ -135,11 +145,7 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str]], report: 
 
     return today_map
 
-from openpyxl import load_workbook
-from datetime import datetime
-import string
-from tabulate import tabulate
-if __name__ == "__main__":
+def main(csv_path: str = "temp.csv"):
     df = pd.read_csv("repo.csv")
     id = df.id.tolist()
     job = df.job.tolist()
@@ -153,7 +159,6 @@ if __name__ == "__main__":
     index_map = build_index(ms)
 
     report = GroupReport()
-    csv_path = "temp.csv"
     today_maps = map_today_ids(csv_path, index_map, report)
 
     # 问题汇总
@@ -171,7 +176,26 @@ if __name__ == "__main__":
             key = str(job_i)
 
         today_members[key] = get_key_by_value(today_maps, job_i)
+    return today_members, report
 
+from openpyxl import load_workbook
+from datetime import datetime
+import string
+from tabulate import tabulate
+
+import argparse
+parser = argparse.ArgumentParser(description="读取数据文件（默认 temp.csv）")
+parser.add_argument(
+    "file",
+    nargs="?",              # 表示这个参数可有可无
+    default="temp.csv",     # 如果没提供，就用默认值
+    help="要读取的文件名（默认：temp.csv）"
+)
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+    today_members, report = main(args.file)
+    
     letters = string.ascii_uppercase
     job_order = ["奶", "火", '圣骑', '拳', '弩', '船', '饺子', '刀']
 
@@ -222,6 +246,7 @@ if __name__ == "__main__":
     df = df.fillna("")
     num_members = (df != "").sum().sum()-df.shape[1]
 
+    csv_path = "temp.csv"
     df_raw = pd.read_csv(csv_path, header=None)
     if num_members != df_raw.shape[0]:
         Warning("Final excel sheet produced different length; check data shape.")
