@@ -53,6 +53,14 @@ class MappingSource:
                              key=lambda x: x[0], reverse=reverse)
         self.weights, self.ids, self.jobs, self.job_types = map(list, zip(*sorted_data))
 
+    def get_weight_by_id(self, target_id: str) -> int:
+        """根据 id 返回对应的 weight 值"""
+        try:
+            index = self.ids.index(target_id)
+            return self.weights[index]
+        except ValueError:
+            raise KeyError(f"id '{target_id}' not found in ids")
+
 def build_index(repo_path: str="repo.csv") -> Tuple[Dict[str, Tuple[str, str, int]], MappingSource]:
     """
     将主数据 ids → (job, job_type) 的唯一映射构建出来。
@@ -165,6 +173,7 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], rep
         repo_id = list(index_map.keys())
         if pattern.findall(pid): # 精准匹配
             id_match = pattern.findall(pid)
+            
             if len(id_match) == 1:
                 id_name = id_match[0]
             else:
@@ -189,9 +198,15 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], rep
                 continue
 
         if id_name in id_list:
-            report.unmapped_ids.append(pid)
-            report.add_warning(f"duplicated id in CSV: {pid}")
+            bug_index = id_list.index(id_name)
+            id_list[bug_index] = today_ids[bug_index]
+            job_list[bug_index] = "未知"
+            job_type_list[bug_index] = "未知"
+            order_weights[bug_index] = 10000
 
+            report.unmapped_ids.append(pid)
+            report.add_warning(f"duplicated id in CSV: [{pid}, {today_ids[bug_index]}]")
+            
             id_list.append(pid)
             job_list.append("未知")
             job_type_list.append("未知")
@@ -208,7 +223,6 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], rep
     if len(today_ids) != df.shape[0]:
         report.add_warning("CSV squeeze produced different length; check data shape.")
     
-
     today_ms = MappingSource(order_weights, id_list, job_list, job_type_list)
     return today_ms
 
@@ -220,9 +234,9 @@ def main(csv_path: str = "temp.csv", repo_path: str="repo.csv", sort_by_repo_wei
     if sort_by_repo_weight:
         today_ms.sort_by_weight()
 
-    today_maps: Dict[str, str] = {}
-    for i, id_i in enumerate(today_ms.ids):
-        today_maps[id_i] = today_ms.job_types[i]
+    # today_maps: Dict[str, str] = {}
+    # for i, id_i in enumerate(today_ms.ids):
+    #     today_maps[id_i] = today_ms.job_types[i]
 
     # 问题汇总
     print("Errors:", report.errors)
@@ -235,7 +249,7 @@ def main(csv_path: str = "temp.csv", repo_path: str="repo.csv", sort_by_repo_wei
         key = str(job_i)
         today_members[key] = get_key_by_value(today_ms.ids, today_ms.jobs, job_i)
 
-    return today_members, today_maps, report
+    return today_members, today_ms, report
 
 from openpyxl import load_workbook
 from datetime import datetime
@@ -253,7 +267,7 @@ parser.add_argument(
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    today_members, today_maps, report = main(args.file)
+    today_members, today_ms, report = main(args.file)
     for warning in report.warnings:
         print("Warnings:", warning)
     
@@ -307,10 +321,22 @@ if __name__ == "__main__":
     df = df.fillna("")
     num_members = (df != "").sum().sum()-df.shape[1]
     
+    id_weight = today_ms.get_weight_by_id(id)
+    
     # check number of members
     df_raw = pd.read_csv(args.file, header=None, names=["line"], delimiter=r'\n', engine="python")
     if num_members != df_raw.shape[0]:
         Warning("Final excel sheet produced different length; check data shape.")
+
+    # print id and weight
+    for index, row in df[1:].iterrows():
+        for col in df.columns:
+            id_i = df.at[index, col]
+            if id_i:
+                id_weight = today_ms.get_weight_by_id(id_i)
+                df.at[index, col] = f"{id_i}({id_weight})"
+            else:
+                continue
 
     print("====================")
     print(f"Total Number of Members: {num_members}")
