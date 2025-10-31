@@ -173,15 +173,16 @@ buckets_remain: Dict[str, List[str]] = {}
 for job_i in set(job_type_remain):
     for i,v in enumerate(job_type_remain):
         if v==job_i:
-            if job_remain[i] not in buckets_remain:
-                buckets_remain[job_remain[i]] = []
-            buckets_remain[job_remain[i]].append(id_remain[i])
+            if job_type_remain[i] not in buckets_remain:
+                buckets_remain[job_type_remain[i]] = []
+            buckets_remain[job_type_remain[i]].append(id_remain[i])
 
 roles_all = [['奶', '近战'],['奶', '远程']]
 numbers_all = [[1,5], [1,5]]
-team_remain, job_remain, buckets_remain_remain = build_teams(roles_all, numbers_all, buckets_remain, today_job_type, report, rng, num_member, team_number_start=3)
+team_remain, _, buckets_remain_remain = build_teams(roles_all, numbers_all, buckets_remain, today_job_type, report, rng, num_member, team_number_start=3)
 team_flatten.extend(team_remain)
-job_flatten.extend(job_remain)
+for id_team in team_remain:
+    job_flatten.append([remain_map[id_i] for id_i in id_team])
 
 for warning in report.warnings:
     print("Warnings:", warning)
@@ -224,10 +225,8 @@ from tabulate import tabulate
 # print
 df = pd.read_excel(f"{now.strftime('%Y%m%d')}一条排班.xlsx", sheet_name="Sheet1", header=None)
 df = df.fillna("")
-num_members = (df != "").sum().sum()-df.shape[1]
 
 print("====================")
-print(f"Total Number of Members: {num_members}")
 print(tabulate(df[1:], headers=df.iloc[0,:].values.astype('str'), tablefmt="github"))
 
 # %%
