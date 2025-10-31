@@ -212,12 +212,13 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], rep
     today_ms = MappingSource(order_weights, id_list, job_list, job_type_list)
     return today_ms
 
-def main(csv_path: str = "temp.csv", repo_path: str="repo.csv"):
+def main(csv_path: str = "temp.csv", repo_path: str="repo.csv", sort_by_repo_weight: bool=False):
     index_map, ms_data = build_index(repo_path)
 
     report = GroupReport()
     today_ms = map_today_ids(csv_path, index_map, report)
-    today_ms.sort_by_weight()
+    if sort_by_repo_weight:
+        today_ms.sort_by_weight()
 
     today_maps: Dict[str, str] = {}
     for i, id_i in enumerate(today_ms.ids):
