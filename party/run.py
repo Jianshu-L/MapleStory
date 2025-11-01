@@ -61,6 +61,14 @@ class MappingSource:
         except ValueError:
             raise KeyError(f"id '{target_id}' not found in ids")
 
+    def get_jtype_by_id(self, target_id: str) -> int:
+        """根据 id 返回对应的 weight 值"""
+        try:
+            index = self.ids.index(target_id)
+            return self.job_types[index]
+        except ValueError:
+            raise KeyError(f"id '{target_id}' not found in ids")
+
 def build_index(repo_path: str="repo.csv") -> Tuple[Dict[str, Tuple[str, str, int]], MappingSource]:
     """
     将主数据 ids → (job, job_type) 的唯一映射构建出来。
@@ -328,15 +336,15 @@ if __name__ == "__main__":
     if num_members != df_raw.shape[0]:
         Warning("Final excel sheet produced different length; check data shape.")
 
-    # print id and weight
-    for index, row in df[1:].iterrows():
-        for col in df.columns:
-            id_i = df.at[index, col]
-            if id_i:
-                id_weight = today_ms.get_weight_by_id(id_i)
-                df.at[index, col] = f"{id_i}({id_weight})"
-            else:
-                continue
+    # # print id and weight
+    # for index, row in df[1:].iterrows():
+    #     for col in df.columns:
+    #         id_i = df.at[index, col]
+    #         if id_i:
+    #             id_weight = today_ms.get_weight_by_id(id_i)
+    #             df.at[index, col] = f"{id_i}({id_weight})"
+    #         else:
+    #             continue
 
     print("====================")
     print(f"Total Number of Members: {num_members}")

@@ -93,7 +93,7 @@ def form_team(spec: TeamSpec, buckets: Dict[str, List[str]], rng: random.Random,
 
     return team_ids, team_jobs_type, full
 
-def build_teams(roles_all, numbers_all, team_number, today_map, today_job_type, report, rng, num_member):
+def build_teams(roles_all, numbers_all, team_number, today_map, report, rng, num_member):
     """
     根据角色分配信息和权重表 today_map 组队。
 
@@ -159,7 +159,7 @@ from openpyxl import load_workbook
 from tabulate import tabulate
 if __name__ == "__main__":
     csv_name = "temp.csv"
-    today_map, today_job_type, report = main(csv_name, sort_by_repo_weight=True)
+    today_map, today_ms, report = main(csv_name, sort_by_repo_weight=True)
     
     ## form teams
     random_seed = 2025
@@ -171,13 +171,21 @@ if __name__ == "__main__":
     # 3) 第三队(洗澡): 奶1 + 火1 + 刀
     team_flatten = []
     job_flatten = []
-
-    roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["船", "弩"]],
-                ["奶", "火", "拳", ["圣骑", "拳"], "饺子", ["弩", "船"]],
-                ["奶", "火", ["刀", "饺子"]],
-                ["奶", "火", ["刀", "饺子"]],
-                ["奶", "火", "弓", ["标", "弓"]],
-                ["奶", "火", "弓", ["标", "弓"]],]          
+    
+    if "船" not in today_map:
+        roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["饺子", "弩"]],
+                    ["奶", "火", "拳", ["圣骑", "拳"], "饺子", ["弩", "饺子"]],
+                    ["奶", "火", ["刀", "饺子"]],
+                    ["奶", "火", ["刀", "饺子"]],
+                    ["奶", "火", "弓", ["标", "弓"]],
+                    ["奶", "火", "弓", ["标", "弓"]],]
+    else:
+        roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["船", "弩"]],
+                    ["奶", "火", "拳", ["圣骑", "拳"], "饺子", ["弩", "船"]],
+                    ["奶", "火", ["刀", "饺子"]],
+                    ["奶", "火", ["刀", "饺子"]],
+                    ["奶", "火", "弓", ["标", "弓"]],
+                    ["奶", "火", "弓", ["标", "弓"]],]          
     numbers_all = [[1, 1, 1, 1, 1, 1],
                 [1, 1, 1, 1, 1, 1],
                 [1, 1, 4],
@@ -186,7 +194,7 @@ if __name__ == "__main__":
                 [1, 1, 1, 3],]
     team_number = [[1,1],[2,1],[1,3],[2,3],[1,2],[2,2]]
 
-    team_flatten, job_flatten, buckets = build_teams(roles_all, numbers_all, team_number, today_map, today_job_type, report, rng, num_member)
+    team_flatten, job_flatten, buckets = build_teams(roles_all, numbers_all, team_number, today_map, report, rng, num_member)
 
     # 3) 第四队(剩余人数按远程近战分组)
     id_remain = []
@@ -196,7 +204,7 @@ if __name__ == "__main__":
         if k != '单挂' and v:
             id_remain.extend(v)
             job_remain.extend([k]*len(v))
-            job_type_remain.extend([today_job_type[v_i] for v_i in v])
+            job_type_remain.extend([today_ms.get_jtype_by_id(v_i) for v_i in v])
 
     remain_map: Dict[str, str] = {}
     for i,id_i in enumerate(id_remain):
@@ -214,7 +222,7 @@ if __name__ == "__main__":
     numbers_all = [[1,5], [1,5]]
     team_number_2 = [[1,4],[2,4]]
 
-    team_remain, _, buckets_remain_remain = build_teams(roles_all, numbers_all, team_number_2, buckets_remain, today_job_type, report, rng, num_member)
+    team_remain, _, buckets_remain_remain = build_teams(roles_all, numbers_all, team_number_2, buckets_remain, report, rng, num_member)
     team_flatten.extend(team_remain)
     for id_team in team_remain:
         job_flatten.append([remain_map[id_i] for id_i in id_team])
