@@ -197,7 +197,7 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], rep
             if index_list and len(index_list) == 1:
                 id_name = repo_id[index_list[0]]
             else:
-                report.unmapped_ids.append(pid)
+                report.errors.append(f"{pid}: {[repo_id[i] for i in index_list]}")
 
                 id_list.append(pid)
                 job_list.append("未知")

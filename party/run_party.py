@@ -39,8 +39,8 @@ def sort_warnings(warnings: List[str]) -> List[str]:
 class TeamSpec:
     # 用声明式“配方”定义每队所需角色，以及如何兜底
     # items 是按顺序的需求：("奶", 1) 表示抽取1人奶；("近战", 3) 表示抽3个近战
-    main_character: Tuple[str, int]
-    fallback: Optional[str] = None  # 可选：当主要类型空时，用次选类型补齐
+    main_character: str
+    fallback: Optional[List[str]] = None  # 可选：当主要类型空时，用次选类型补齐
 
 def pop_random(lst: List, rng: random.Random) -> Optional[str]:
     if not lst:
@@ -79,11 +79,13 @@ def form_team(spec: TeamSpec, buckets: Dict[str, List[str]], rng: random.Random,
     team_jobs_type.append([role]*got)
 
     # 不够的从备选职业取
-    if got < n and spec.fallback:
-        fb_role = spec.fallback
-        fb_got = take(fb_role, n-got)
-        got += fb_got
-        team_jobs_type.append([fb_role]*fb_got)
+    if spec.fallback:
+        for fallback_i in spec.fallback:
+            if got < n:
+                fb_role = fallback_i
+                fb_got = take(fb_role, n-got)
+                got += fb_got
+                team_jobs_type.append([fb_role]*fb_got)
 
     # check number of member
     if got != n:
@@ -125,7 +127,7 @@ def build_teams(roles_all, numbers_all, team_number, today_map, report, rng, num
             # 角色可能是 ["主职业","副职业"] 这种结构
             if isinstance(role, list):
                 spec = TeamSpec(main_character=(role[0], number),
-                                fallback=role[1])
+                                fallback=role[1:])
             else:
                 spec = TeamSpec(main_character=(role, number))
 
@@ -172,20 +174,12 @@ if __name__ == "__main__":
     team_flatten = []
     job_flatten = []
     
-    if "船" not in today_map:
-        roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["饺子", "弩"]],
-                    ["奶", "火", "拳", ["圣骑", "拳"], "饺子", ["弩", "饺子"]],
-                    ["奶", "火", ["刀", "饺子"]],
-                    ["奶", "火", ["刀", "饺子"]],
-                    ["奶", "火", "弓", ["标", "弓"]],
-                    ["奶", "火", "弓", ["标", "弓"]],]
-    else:
-        roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["船", "弩"]],
-                    ["奶", "火", "拳", ["圣骑", "拳"], "饺子", ["弩", "船"]],
-                    ["奶", "火", ["刀", "饺子"]],
-                    ["奶", "火", ["刀", "饺子"]],
-                    ["奶", "火", "弓", ["标", "弓"]],
-                    ["奶", "火", "弓", ["标", "弓"]],]          
+    roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["火毒", "饺子", "圣骑", "冰雷", "拳"]],
+                ["奶", "火", "拳", "圣骑", "饺子", ["冰雷", "饺子", "圣骑", "火毒", "拳"]],
+                ["奶", "火", ["刀", "饺子"]],
+                ["奶", "火", ["刀", "饺子"]],
+                ["奶", "火", "弓", ["标", "弓", "船", "弩"]],
+                ["奶", "火", "弓", ["标", "弓", "弩", "船"]],]       
     numbers_all = [[1, 1, 1, 1, 1, 1],
                 [1, 1, 1, 1, 1, 1],
                 [1, 1, 4],
@@ -260,6 +254,13 @@ if __name__ == "__main__":
     ws['k2'] = '单挂'
     for i, id_i in enumerate(buckets['单挂']):
         ws[f'k{2+i+1}'] = id_i
+    
+    i += 2
+    for key, value in buckets_remain_remain.items():
+        for v_i in value:
+            id_i = f"{key}: {v_i}"
+            ws[f'k{2+i+1}'] = id_i
+            i += 1
 
     wb.save(f"{now.strftime('%Y%m%d')}一条排班.xlsx")
 
