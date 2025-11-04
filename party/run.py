@@ -178,6 +178,13 @@ def map_today_ids(csv_path: str, index_map: Dict[str, Tuple[str, str, int]], rep
             order_weights.append(10000) # append a big value
             continue
 
+        if "一起" in pid:
+            id_list.append(pid)
+            job_list.append("未知")
+            job_type_list.append("未知")
+            order_weights.append(10000) # append a big value
+            continue
+
         repo_id = list(index_map.keys())
         if pattern.findall(pid): # 精准匹配
             id_match = pattern.findall(pid)

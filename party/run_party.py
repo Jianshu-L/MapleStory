@@ -124,6 +124,10 @@ def build_teams(roles_all, numbers_all, team_number, today_map, report, rng, num
 
         # 遍历当前队伍所有角色
         for role, number in zip(roles, numbers):
+            # 动态调整职业人数
+            if number == -1:
+                number = num_member-len(team_i)
+
             # 角色可能是 ["主职业","副职业"] 这种结构
             if isinstance(role, list):
                 spec = TeamSpec(main_character=(role[0], number),
@@ -174,14 +178,14 @@ if __name__ == "__main__":
     team_flatten = []
     job_flatten = []
     
-    roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["火毒", "饺子", "圣骑", "冰雷", "拳"]],
-                ["奶", "火", "拳", "圣骑", "饺子", ["冰雷", "饺子", "圣骑", "火毒", "拳"]],
+    roles_all = [["奶", "火", "拳", "圣骑", "饺子", ["火毒", "冰雷", "船", "饺子", "圣骑",  "拳", ]],
+                ["奶", "火", "拳", "圣骑", "饺子", ["冰雷", "火毒", "船", "饺子", "圣骑", "拳", ]],
                 ["奶", "火", ["刀", "饺子"]],
                 ["奶", "火", ["刀", "饺子"]],
                 ["奶", "火", "弓", ["标", "弓", "船", "弩"]],
                 ["奶", "火", "弓", ["标", "弓", "弩", "船"]],]       
-    numbers_all = [[1, 1, 1, 1, 1, 1],
-                [1, 1, 1, 1, 1, 1],
+    numbers_all = [[1, 1, 1, 1, 1, -1],
+                [1, 1, 1, 1, 1, -1],
                 [1, 1, 4],
                 [1, 1, 4],
                 [1, 1, 1, 3],
